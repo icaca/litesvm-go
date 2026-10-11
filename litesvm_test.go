@@ -1,12 +1,15 @@
 package litesvm
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"os"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"testing"
+	"time"
 
 	bin "github.com/gagliardetto/binary"
 	solana "github.com/gagliardetto/solana-go"
@@ -64,6 +67,38 @@ func TestNewAndClose(t *testing.T) {
 	svm.Close()
 	// second close is a no-op
 	svm.Close()
+}
+
+func TestCloseStopsCacheWorkers(t *testing.T) {
+	workers := func() int {
+		var stacks bytes.Buffer
+		if err := pprof.Lookup("goroutine").WriteTo(&stacks, 2); err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, line := range strings.Split(stacks.String(), "\n") {
+			if strings.Contains(line, "otter/internal/core.") && strings.Contains(line, ").process(") {
+				count++
+			}
+		}
+		return count
+	}
+	baseline := workers()
+	for range 10 {
+		svm, err := New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		svm.Close()
+		svm.Close()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for workers() > baseline && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := workers(); got > baseline {
+		t.Fatalf("cache workers after Close = %d, before New = %d", got, baseline)
+	}
 }
 
 func TestVersion(t *testing.T) {

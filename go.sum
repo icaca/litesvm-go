@@ -103,6 +103,8 @@ github.com/gtank/ristretto255 v0.1.2 h1:JEqUCPA1NvLq5DwYtuzigd7ss8fwbYay9fi4/5uM
 github.com/gtank/ristretto255 v0.1.2/go.mod h1:Ph5OpO6c7xKUGROZfWVLiJf9icMDwUeIvY4OmlYW69o=
 github.com/holiman/uint256 v1.3.2 h1:a9EgMPSC1AAaj1SZL5zIQD3WbwTuHrMGOerLjGmM/TA=
 github.com/holiman/uint256 v1.3.2/go.mod h1:EOMSn4q6Nyt9P6efbI3bueV4e1b3dGlUCXeiRV4ng7E=
+github.com/icaca/mithril v0.0.0-20261011095322-3462d22afff8 h1:ZDVTAj7H1/7imTd+86lojD6LFwT8nwFdaFvZbV7OiMo=
+github.com/icaca/mithril v0.0.0-20261011095322-3462d22afff8/go.mod h1:5jwciRa4d2AKjZJblPj1MnhuOEVxTT/VbL0bZdJae10=
 github.com/iden3/go-iden3-crypto v0.0.16 h1:zN867xiz6HgErXVIV/6WyteGcOukE9gybYTorBMEdsk=
 github.com/iden3/go-iden3-crypto v0.0.16/go.mod h1:dLpM4vEPJ3nDHzhWFXDjzkn1qHoBeOT/3UEhXsEsP3E=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
@@ -194,8 +196,6 @@ github.com/shopspring/decimal v1.3.1 h1:2Usl1nmF/WZucqkFZhnfFYxxxu8LG21F6nPQBE5g
 github.com/shopspring/decimal v1.3.1/go.mod h1:DKyhrW/HYNuLGql+MJL6WCR6knT2jwCFRcu2hWCYk4o=
 github.com/smcio/go-ethereum v1.15.12-0.20250621134551-8b739407bb93 h1:SyVKMYtLvEIo1v/rVlHXu9c+DLDuad6rGZedFTsvT9c=
 github.com/smcio/go-ethereum v1.15.12-0.20250621134551-8b739407bb93/go.mod h1:Yt8yVvAdi0Bzks6fBid2WM6MXbP5VRYPUJRKYCylDw4=
-github.com/sonicfromnewyoke/mithril v0.0.0-20260904214740-1faedf56e5dc h1:7E7PO3zbWhu5G8rikpo4VdoM9lOzBwn+3T4SHmX0+Ek=
-github.com/sonicfromnewyoke/mithril v0.0.0-20260904214740-1faedf56e5dc/go.mod h1:5jwciRa4d2AKjZJblPj1MnhuOEVxTT/VbL0bZdJae10=
 github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 h1:+jumHNA0Wrelhe64i8F6HNlS8pkoyMv5sreGx2Ry5Rw=
 github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8/go.mod h1:3n1Cwaq1E1/1lhQhtRK2ts/ZwZEhjcQeJQ1RuC6Q/8U=
 github.com/spf13/afero v1.15.0 h1:b/YBCLWAJdFWJTN9cLhiXXcD7mzKn9Dm86dNnfyQw1I=

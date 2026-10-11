@@ -76,7 +76,8 @@ type LiteSVM struct {
 	logBytesLimit  *uint64
 	// computeBudget, when non-nil, is the custom per-instance compute
 	// budget installed by SetComputeBudget; see computebudget.go.
-	computeBudget *ComputeBudget
+	computeBudget       *ComputeBudget
+	diagnosticExecution DiagnosticExecutionConfig
 
 	historyCap   int
 	history      map[solana.Signature]*TxOutcome
@@ -93,7 +94,7 @@ type LiteSVM struct {
 // feature-gate accounts for every mainnet-active feature, an airdrop pool of
 // 1M SOL, and the deterministic genesis blockhash sha256("genesis").
 // Native mints stay opt-in via WithNativeMints, as in Rust.
-func New() (*LiteSVM, error) {
+func New() (_ *LiteSVM, err error) {
 	s := &LiteSVM{
 		mem:            accounts.NewMemAccounts(),
 		cache:          &sealevel.SysvarCacheData{},
@@ -105,6 +106,11 @@ func New() (*LiteSVM, error) {
 		history:        make(map[solana.Signature]*TxOutcome),
 	}
 	s.stubDb.InitCaches()
+	defer func() {
+		if err != nil {
+			s.Close()
+		}
+	}()
 
 	s.feats = defaultFeatures()
 
@@ -139,9 +145,13 @@ func New() (*LiteSVM, error) {
 	return s, nil
 }
 
-// Close is a no-op: the engine holds no resources that need releasing.
-// It exists so `defer svm.Close()` remains valid.
-func (s *LiteSVM) Close() {}
+// Close releases the caches and stops their background workers. It is safe to
+// call repeatedly, but the instance must not be used after Close.
+func (s *LiteSVM) Close() {
+	s.stubDb.VoteAcctCache.Close()
+	s.stubDb.ProgramCache.Close()
+	s.stubDb.CommonAcctsCache.Close()
+}
 
 // Version reports the engine backing this package.
 func Version() string {

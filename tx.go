@@ -95,7 +95,12 @@ func (s *LiteSVM) execute(tx *solana.Transaction, simulate bool) (*TxOutcome, er
 		}
 	}
 
-	s.applyComputeBudgetOverride(tx)
+	var diagnosticLimit *uint32
+	if s.diagnosticExecution.ComputeUnitLimit != 0 {
+		diagnosticLimit = &s.diagnosticExecution.ComputeUnitLimit
+	} else {
+		s.applyComputeBudgetOverride(tx)
+	}
 
 	// With blockhash checking disabled, make the tx's blockhash valid for
 	// the duration of the replay call only. The queue is restored BEFORE
@@ -106,11 +111,13 @@ func (s *LiteSVM) execute(tx *solana.Transaction, simulate bool) (*TxOutcome, er
 		restore = s.injectBlockhash(tx.Message.RecentBlockhash)
 	}
 	out := replay.LoadAndExecuteTransaction(replay.LoadAndExecuteTransactionInput{
-		SlotCtx:                 slotCtx,
-		Transaction:             tx,
-		IsSimulation:            simulate,
-		RecordInnerInstructions: true,
-		LogBytesLimit:           s.logBytesLimit,
+		SlotCtx:                    slotCtx,
+		Transaction:                tx,
+		IsSimulation:               simulate,
+		RecordInnerInstructions:    true,
+		LogBytesLimit:              s.logBytesLimit,
+		DiagnosticComputeUnitLimit: diagnosticLimit,
+		PreserveRentEpoch:          s.diagnosticExecution.PreserveRentEpoch,
 	})
 	restore()
 
@@ -122,6 +129,7 @@ func (s *LiteSVM) execute(tx *solana.Transaction, simulate bool) (*TxOutcome, er
 			// withdrawal fails (lib.rs:1444-1449).
 			outcome.ok = false
 			outcome.err = `"` + errName + `"`
+			outcome.runtimeError = nil
 		}
 		// Rust records every included tx: successes always, failures
 		// whenever an execution context was produced (fee charged), i.e.
@@ -475,6 +483,7 @@ func (s *LiteSVM) commit(slotCtx *sealevel.SlotCtx, tx *solana.Transaction, out 
 // populateOutcome maps mithril's execution output onto the TxOutcome shape.
 func (s *LiteSVM) populateOutcome(o *TxOutcome, tx *solana.Transaction, out *replay.LoadAndExecuteTransactionOutput, simulate bool) {
 	if te := out.ProcessingResult.TransactionError; te != nil {
+		o.runtimeError = te.InstructionError
 		if b, err := te.MarshalJSON(); err == nil {
 			o.err = string(b)
 		} else {
@@ -486,6 +495,17 @@ func (s *LiteSVM) populateOutcome(o *TxOutcome, tx *solana.Transaction, out *rep
 
 	if out.FeeInfo != nil {
 		o.fee = out.FeeInfo.TotalFee
+	}
+	if out.ExecCtx != nil {
+		for _, invocation := range out.ExecCtx.InvocationCU {
+			o.invocationCU = append(o.invocationCU, InvocationCU(invocation))
+		}
+		for _, acct := range out.ExecCtx.TransactionContext.Accounts.Accounts {
+			o.executionAccounts = append(o.executionAccounts, PostAccount{
+				Address: acct.Key,
+				Account: toSolanaAccount(acct),
+			})
+		}
 	}
 
 	pt := out.ProcessingResult.ProcessedTransaction

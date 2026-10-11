@@ -23,9 +23,26 @@ go get github.com/LiteSVM/litesvm-go
 ```
 
 Requires Go 1.25.7 or newer; cross-compilation works with plain
-`GOOS`/`GOARCH`. Note: until the patched `mithril` and `solana-go`
-dependencies are published, `go.mod` carries two local-path `replace`
-directives that you must point at your own checkouts.
+`GOOS`/`GOARCH`.
+
+This fork adds diagnostic execution APIs and cache cleanup to upstream v0.3.0.
+To use these extensions, keep the upstream import path and replace
+`github.com/LiteSVM/litesvm-go` with a pinned version of
+`github.com/icaca/litesvm-go` in your main module. Also copy this engine
+replacement into your main module: Go does not inherit dependency replacements.
+
+```go
+replace github.com/sonicfromnewyoke/mithril => github.com/icaca/mithril v0.0.0-20261011095322-3462d22afff8
+```
+
+No sibling source checkout or local workspace is required. `Close()` releases
+the instance caches and may be called repeatedly; do not use the VM afterward.
+`SetDiagnosticExecution` can override the execution CU limit without rewriting
+transaction instructions and optionally preserve fixture RentEpoch values.
+These diagnostic limits do not represent budgets accepted by the network.
+`ExecutionAccounts`, `RuntimeError`, and `InvocationCU` expose pre-rollback
+snapshots, original engine errors, and inclusive CU in completion order.
+`ValidateProgramForExecution` checks deployed bytes using execution loader rules.
 
 ## Quick start
 
@@ -106,7 +123,8 @@ func TestTransfer(t *testing.T) {
 - The engine is [mithril](https://github.com/Overclock-Validator/mithril)'s
   SVM, running as pure Go inside your test process. It is consumed from the
   [sonicfromnewyoke/mithril](https://github.com/sonicfromnewyoke/mithril)
-  fork, which carries the patches this package needs.
+  fork, with additional diagnostic patches pinned from
+  [icaca/mithril](https://github.com/icaca/mithril/tree/litesvm-diagnostics).
 - Transaction error strings (`TxOutcome.Error`) are Agave wire-format
   JSON, e.g. `{"InstructionError":[0,{"Custom":1}]}`.
 - `SetComputeBudget` honors `ComputeUnitLimit` and `HeapSize` only; every

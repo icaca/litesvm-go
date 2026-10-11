@@ -163,12 +163,16 @@ func (s *LiteSVM) SetFeatureSet(f *FeatureSet) error {
 	if f == nil {
 		return fmt.Errorf("%w: SetFeatureSet: nil feature set", ErrLiteSVM)
 	}
+	s.feats = f.runtimeFeatures()
+	return nil
+}
+
+func (f *FeatureSet) runtimeFeatures() *features.Features {
 	feats := features.NewFeaturesDefault()
 	for _, gate := range features.AllFeatureGates {
 		if slot, ok := f.active[solana.PublicKey(gate.Address)]; ok {
 			feats.EnableFeature(gate, slot)
 		}
 	}
-	s.feats = feats
-	return nil
+	return feats
 }

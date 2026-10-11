@@ -22,6 +22,9 @@ type TxOutcome struct {
 	logs                []string
 	inner               InnerInstructionsList
 	postAccounts        []PostAccount
+	runtimeError        error
+	executionAccounts   []PostAccount
+	invocationCU        []InvocationCU
 }
 
 // PostAccount is a (address, account) pair returned by a successful
