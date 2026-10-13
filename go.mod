@@ -111,4 +111,4 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
-replace github.com/sonicfromnewyoke/mithril => github.com/icaca/mithril v0.0.0-20261011172640-6f6017f413b6
+replace github.com/sonicfromnewyoke/mithril => github.com/icaca/mithril v0.0.0-20261013225811-ed4c00ede836

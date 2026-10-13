@@ -103,8 +103,8 @@ github.com/gtank/ristretto255 v0.1.2 h1:JEqUCPA1NvLq5DwYtuzigd7ss8fwbYay9fi4/5uM
 github.com/gtank/ristretto255 v0.1.2/go.mod h1:Ph5OpO6c7xKUGROZfWVLiJf9icMDwUeIvY4OmlYW69o=
 github.com/holiman/uint256 v1.3.2 h1:a9EgMPSC1AAaj1SZL5zIQD3WbwTuHrMGOerLjGmM/TA=
 github.com/holiman/uint256 v1.3.2/go.mod h1:EOMSn4q6Nyt9P6efbI3bueV4e1b3dGlUCXeiRV4ng7E=
-github.com/icaca/mithril v0.0.0-20261011172640-6f6017f413b6 h1:MNMxKo8aL+R9U9/0V0kBAizGvQJDmnpwFzpmPEoXczw=
-github.com/icaca/mithril v0.0.0-20261011172640-6f6017f413b6/go.mod h1:5jwciRa4d2AKjZJblPj1MnhuOEVxTT/VbL0bZdJae10=
+github.com/icaca/mithril v0.0.0-20261013225811-ed4c00ede836 h1:1KbvjdvZLh1PHSHGTHN/R4xmdwb8Wmf0YoFcV+sF9Zk=
+github.com/icaca/mithril v0.0.0-20261013225811-ed4c00ede836/go.mod h1:5jwciRa4d2AKjZJblPj1MnhuOEVxTT/VbL0bZdJae10=
 github.com/iden3/go-iden3-crypto v0.0.16 h1:zN867xiz6HgErXVIV/6WyteGcOukE9gybYTorBMEdsk=
 github.com/iden3/go-iden3-crypto v0.0.16/go.mod h1:dLpM4vEPJ3nDHzhWFXDjzkn1qHoBeOT/3UEhXsEsP3E=
 github.com/json-iterator/go v1.1.12 h1:PV8peI4a0ysnczrg+LtxykD8LfKY9ML6u2jnxaEnrnM=
