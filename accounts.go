@@ -7,7 +7,9 @@ import (
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/sonicfromnewyoke/mithril/pkg/accounts"
+	"github.com/sonicfromnewyoke/mithril/pkg/accountsdb"
 	"github.com/sonicfromnewyoke/mithril/pkg/addresses"
+	"github.com/sonicfromnewyoke/mithril/pkg/sbpf"
 	"github.com/sonicfromnewyoke/mithril/pkg/sealevel"
 
 	"github.com/LiteSVM/litesvm-go/internal/elf"
@@ -79,6 +81,7 @@ func (s *LiteSVM) SetAccount(pubkey solana.PublicKey, acct *solana.Account) erro
 	// preference to account data, so evict the key and let the next
 	// execution recompile from the freshly written bytes.
 	s.stubDb.RemoveProgramFromCache(pubkey)
+	delete(s.immutablePrograms, pubkey)
 
 	if m.Lamports == 0 {
 		// Rust removes zero-lamport accounts (accounts_db.rs add_account).
@@ -115,10 +118,18 @@ func NewAccount(lamports uint64, data []byte, owner solana.PublicKey, executable
 // (which loads and verifies the ELF while populating its program cache),
 // invalid program bytes are rejected up front.
 func (s *LiteSVM) AddProgram(programID solana.PublicKey, programBytes []byte) error {
-	if err := sealevel.ValidateUpgradeableLoaderProgram(programBytes, s.feats); err != nil {
+	program, err := sealevel.LoadSharedProgram(programBytes, s.feats, true)
+	if err != nil {
 		return fmt.Errorf("%w: add_program: invalid program bytes: %v", ErrLiteSVM, err)
 	}
-	return s.addProgramV3(programID, programBytes)
+	// An ELF can pass deployment's syscall set yet collide with a runtime-only
+	// syscall. Preserve successful installation but leave execution uncached then.
+	if executable, err := sealevel.LoadSharedProgram(programBytes, s.feats, false); err == nil {
+		program = executable
+	} else {
+		program = nil
+	}
+	return s.addProgramV3(programID, programBytes, program)
 }
 
 // AddProgramFromFile loads an SBF program ELF from disk and installs it.
@@ -164,7 +175,7 @@ func (s *LiteSVM) addProgramV1V2(programID solana.PublicKey, programBytes []byte
 	acct := &accounts.Account{
 		Key:        programID,
 		Lamports:   rentMin,
-		Data:       programBytes,
+		Data:       append([]byte(nil), programBytes...),
 		Owner:      loader,
 		Executable: true,
 	}
@@ -178,7 +189,7 @@ func (s *LiteSVM) addProgramV1V2(programID solana.PublicKey, programBytes []byte
 
 // addProgramV3 installs a program under the upgradeable loader: a program
 // account pointing at a canonical programdata account holding the ELF.
-func (s *LiteSVM) addProgramV3(programID solana.PublicKey, programBytes []byte) error {
+func (s *LiteSVM) addProgramV3(programID solana.PublicKey, programBytes []byte, program *sbpf.Program) error {
 	upgradeable := solana.PublicKey(addresses.BpfLoaderUpgradeableAddr)
 	programData, _, err := solana.FindProgramAddress([][]byte{programID[:]}, upgradeable)
 	if err != nil {
@@ -227,11 +238,16 @@ func (s *LiteSVM) addProgramV3(programID solana.PublicKey, programBytes []byte) 
 	}); err != nil {
 		return fmt.Errorf("%w: write program account: %v", ErrLiteSVM, err)
 	}
-	// Mithril caches upgradeable-loader programs keyed on the canonical
-	// programdata address (bpf_loader.go); evict both keys so re-installing
-	// under the same program id executes the new ELF instead of stale
-	// compiled bytes.
+	// This allocation has no external aliases. Transactions revoke its fast
+	// binding before exposing it, even for readonly instruction accounts.
 	s.stubDb.RemoveProgramFromCache(programData)
+	delete(s.immutablePrograms, programData)
+	if program != nil {
+		entry := &accountsdb.ProgramCacheEntry{Program: program}
+		entry.BindImmutableSource(pdData[45:], s.feats)
+		s.stubDb.AddProgramToCache(programData, entry)
+		s.immutablePrograms[programData] = struct{}{}
+	}
 	s.stubDb.RemoveProgramFromCache(programID)
 	return nil
 }
@@ -248,7 +264,11 @@ func (s *LiteSVM) SetDefaultPrograms() error {
 		case elf.LoaderV2:
 			err = s.addProgramV1V2(p.ProgramID, p.Elf, addresses.BpfLoader2Addr)
 		case elf.LoaderV3:
-			err = s.addProgramV3(p.ProgramID, p.Elf)
+			var program *sbpf.Program
+			program, err = sealevel.LoadSharedProgram(p.Elf, s.feats, false)
+			if err == nil {
+				err = s.addProgramV3(p.ProgramID, p.Elf, program)
+			}
 		default:
 			err = fmt.Errorf("%w: unknown loader for %s", ErrLiteSVM, p.Name)
 		}

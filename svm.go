@@ -60,6 +60,8 @@ type LiteSVM struct {
 	// stubDb is a disk-free accountsdb used only for the program cache;
 	// it opens no database and touches no disk.
 	stubDb *accountsdb.AccountsDb
+	// Sources installed by us stay private until a transaction names the account.
+	immutablePrograms map[solana.PublicKey]struct{}
 
 	slot        uint64
 	blockhashes []solana.Hash // newest first, capped at maxRecentBlockhashes
@@ -96,14 +98,15 @@ type LiteSVM struct {
 // Native mints stay opt-in via WithNativeMints, as in Rust.
 func New() (_ *LiteSVM, err error) {
 	s := &LiteSVM{
-		mem:            accounts.NewMemAccounts(),
-		cache:          &sealevel.SysvarCacheData{},
-		stubDb:         &accountsdb.AccountsDb{},
-		feeGov:         defaultFeeRateGovernor(),
-		sigverify:      true,
-		blockhashCheck: true,
-		historyCap:     defaultHistoryCapacity,
-		history:        make(map[solana.Signature]*TxOutcome),
+		mem:               accounts.NewMemAccounts(),
+		immutablePrograms: make(map[solana.PublicKey]struct{}),
+		cache:             &sealevel.SysvarCacheData{},
+		stubDb:            &accountsdb.AccountsDb{UseSharedProgramCache: true},
+		feeGov:            defaultFeeRateGovernor(),
+		sigverify:         true,
+		blockhashCheck:    true,
+		historyCap:        defaultHistoryCapacity,
+		history:           make(map[solana.Signature]*TxOutcome),
 	}
 	s.stubDb.InitCaches()
 	defer func() {

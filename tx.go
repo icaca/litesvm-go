@@ -77,6 +77,15 @@ func (s *LiteSVM) execute(tx *solana.Transaction, simulate bool) (*TxOutcome, er
 		return outcome, nil
 	}
 
+	// Revoke before account loading: even readonly transaction references can
+	// expose aliases to native loaders. This includes resolved lookup keys,
+	// simulations and failed transactions; subsequent hits use byte comparison.
+	for _, key := range tx.Message.AccountKeys {
+		if _, ok := s.immutablePrograms[key]; ok {
+			s.stubDb.RemoveProgramFromCache(key)
+			delete(s.immutablePrograms, key)
+		}
+	}
 	slotCtx := s.newSlotCtx()
 
 	if s.sigverify && s.historyCap > 0 && len(tx.Signatures) > 0 {
