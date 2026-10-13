@@ -2,6 +2,7 @@ package litesvm
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"maps"
 	"slices"
@@ -114,13 +115,16 @@ func TestPrivateProgramSourceInvalidation(t *testing.T) {
 }
 
 func TestImmutableProgramSourceInvalidation(t *testing.T) {
-	s := mustNew(t)
+	s, other := mustNew(t), mustNew(t)
 	id := solana.PublicKey{180}
 	require.ErrorIs(t, s.AddProgramImmutable(id, []byte("invalid ELF")), ErrLiteSVM)
 	source := bytes.Clone(elf.Defaults[3].Elf)
 	require.NoError(t, s.AddProgramImmutable(id, source))
 	dataKey, _, err := solana.FindProgramAddress([][]byte{id[:]}, solana.BPFLoaderUpgradeableProgramID)
 	require.NoError(t, err)
+	require.NoError(t, other.AddProgramImmutable(id, source))
+	original := other.GetAccount(dataKey)
+	require.Same(t, &s.mem.Map[dataKey].Data[0], &other.mem.Map[dataKey].Data[0])
 	payer := solana.NewWallet()
 	require.NoError(t, s.Airdrop(payer.PublicKey(), lamportsPerSol))
 	run := func(payload string) *TxOutcome {
@@ -131,9 +135,144 @@ func TestImmutableProgramSourceInvalidation(t *testing.T) {
 	require.True(t, run("immutable source").IsOk())
 	data := s.GetAccount(dataKey)
 	data.Data[45] = 0
+	require.Equal(t, original, s.GetAccount(dataKey), "GetAccount must return a private copy")
 	require.NoError(t, s.SetAccount(dataKey, data))
 	require.False(t, run("invalidated source").IsOk(), "a private account write must invalidate the VM binding")
+	require.Equal(t, original, other.GetAccount(dataKey))
 	require.Equal(t, elf.Defaults[3].Elf, source, "VM writes must not change the promised source")
 	require.NoError(t, s.AddProgramImmutable(id, source))
 	require.True(t, run("reinstalled source").IsOk(), "a warm immutable install must restore the original program")
+	require.Same(t, &s.mem.Map[dataKey].Data[0], &other.mem.Map[dataKey].Data[0])
+}
+
+func TestSharedProgramDataTransactionExposure(t *testing.T) {
+	s, other := mustNew(t), mustNew(t)
+	id := solana.PublicKey{181}
+	source := bytes.Clone(elf.Defaults[3].Elf)
+	dataKey, _, err := solana.FindProgramAddress([][]byte{id[:]}, solana.BPFLoaderUpgradeableProgramID)
+	require.NoError(t, err)
+	require.NoError(t, other.AddProgramImmutable(id, source))
+	original := other.GetAccount(dataKey)
+	payer := solana.NewWallet()
+	require.NoError(t, s.Airdrop(payer.PublicKey(), lamportsPerSol))
+	table := solana.PublicKey{182}
+	require.NoError(t, s.SetAccount(table, &solana.Account{
+		Lamports: lamportsPerSol, Owner: solana.AddressLookupTableProgramID,
+		Data: altAccountData(payer.PublicKey(), dataKey),
+	}))
+	require.NoError(t, s.WarpToSlot(1))
+
+	for _, tc := range []struct {
+		name                       string
+		writable, simulate, lookup bool
+	}{
+		{name: "readonly simulation", simulate: true},
+		{name: "writable failed transaction", writable: true},
+		{name: "readonly lookup", lookup: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, s.AddProgramImmutable(id, source))
+			require.Same(t, &s.mem.Map[dataKey].Data[0], &other.mem.Map[dataKey].Data[0])
+			meta := solana.Meta(dataKey)
+			if tc.writable {
+				meta.WRITE()
+			}
+			ix := solana.NewInstruction(id, solana.AccountMetaSlice{meta}, []byte(tc.name))
+			blockhash, err := s.LatestBlockhash()
+			require.NoError(t, err)
+			opts := []solana.TransactionOption{solana.TransactionPayer(payer.PublicKey())}
+			if tc.lookup {
+				opts = append(opts, solana.TransactionAddressTables(map[solana.PublicKey]solana.PublicKeySlice{table: {dataKey}}))
+			}
+			tx, err := solana.NewTransaction([]solana.Instruction{ix}, blockhash, opts...)
+			require.NoError(t, err)
+			if tc.lookup {
+				require.NotContains(t, tx.Message.AccountKeys, dataKey)
+			}
+			_, err = tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+				if key == payer.PublicKey() {
+					return &payer.PrivateKey
+				}
+				return nil
+			})
+			require.NoError(t, err)
+			encoded, err := tx.MarshalBinary()
+			require.NoError(t, err)
+			var out *TxOutcome
+			if tc.simulate {
+				out, err = s.SimulateVersionedTransaction(encoded)
+			} else {
+				out, err = s.SendVersionedTransaction(encoded)
+			}
+			require.NoError(t, err)
+			require.False(t, out.IsOk(), "Memo requires referenced accounts to sign")
+			require.NotSame(t, &s.mem.Map[dataKey].Data[0], &other.mem.Map[dataKey].Data[0])
+			// Model a native write through an exposed alias, bypassing setters.
+			s.mem.Map[dataKey].Data[45] = 0
+			require.Equal(t, original, other.GetAccount(dataKey))
+			require.NoError(t, s.AddProgramImmutable(id, source))
+			require.Equal(t, original, s.GetAccount(dataKey))
+		})
+	}
+}
+
+func TestSharedProgramDataUpgradeAndClose(t *testing.T) {
+	s, other := mustNew(t), mustNew(t)
+	id := solana.PublicKey{183}
+	source := bytes.Clone(elf.Defaults[3].Elf)
+	require.NoError(t, s.AddProgramImmutable(id, source))
+	require.NoError(t, other.AddProgramImmutable(id, source))
+	dataKey, _, err := solana.FindProgramAddress([][]byte{id[:]}, solana.BPFLoaderUpgradeableProgramID)
+	require.NoError(t, err)
+	original := other.GetAccount(dataKey)
+	payer := solana.NewWallet()
+	require.NoError(t, s.Airdrop(payer.PublicKey(), lamportsPerSol))
+	// Installed programs use the zero authority; disable crypto verification
+	// while retaining the loader signer/authority checks.
+	require.NoError(t, s.SetSigverify(false))
+	require.NoError(t, s.WarpToSlot(1))
+	runLoader := func(kind byte, metas solana.AccountMetaSlice) {
+		ix := solana.NewInstruction(solana.BPFLoaderUpgradeableProgramID, metas, []byte{kind, 0, 0, 0})
+		blockhash, err := s.LatestBlockhash()
+		require.NoError(t, err)
+		tx, err := solana.NewTransaction([]solana.Instruction{ix}, blockhash, solana.TransactionPayer(payer.PublicKey()))
+		require.NoError(t, err)
+		tx.Signatures = make([]solana.Signature, tx.Message.Header.NumRequiredSignatures)
+		encoded, err := tx.MarshalBinary()
+		require.NoError(t, err)
+		out, err := s.SendLegacyTransaction(encoded)
+		require.NoError(t, err)
+		require.True(t, out.IsOk(), "%s", out.Error())
+	}
+	buffer := solana.PublicKey{184}
+	replacement := elf.Defaults[3].Elf
+	require.LessOrEqual(t, len(replacement), len(source))
+	bufferData := make([]byte, 37+len(replacement))
+	binary.LittleEndian.PutUint32(bufferData, 1)
+	bufferData[4] = 1 // Some(zero authority)
+	copy(bufferData[37:], replacement)
+	require.NoError(t, s.SetAccount(buffer, &solana.Account{
+		Lamports: lamportsPerSol, Owner: solana.BPFLoaderUpgradeableProgramID, Data: bufferData,
+	}))
+	runLoader(3, solana.AccountMetaSlice{
+		solana.Meta(dataKey).WRITE(), solana.Meta(id).WRITE(), solana.Meta(buffer).WRITE(),
+		solana.Meta(payer.PublicKey()).WRITE(), solana.Meta(solana.SysVarRentPubkey),
+		solana.Meta(solana.SysVarClockPubkey), solana.Meta(solana.PublicKey{}).SIGNER(),
+	})
+	upgraded := s.GetAccount(dataKey)
+	require.Equal(t, uint64(1), binary.LittleEndian.Uint64(upgraded.Data[4:12]))
+	require.Equal(t, replacement, upgraded.Data[45:45+len(replacement)])
+	require.Equal(t, original, other.GetAccount(dataKey))
+
+	// Reinstall shared storage before exercising the close path independently.
+	require.NoError(t, s.AddProgramImmutable(id, source))
+	runLoader(5, solana.AccountMetaSlice{
+		solana.Meta(dataKey).WRITE(), solana.Meta(payer.PublicKey()).WRITE(),
+		solana.Meta(solana.PublicKey{}).SIGNER(), solana.Meta(id).WRITE(),
+	})
+	require.Nil(t, s.GetAccount(dataKey))
+	require.Equal(t, original, other.GetAccount(dataKey))
+	require.NoError(t, s.AddProgramImmutable(id, source))
+	require.Equal(t, original, s.GetAccount(dataKey))
+	require.Equal(t, elf.Defaults[3].Elf, source)
 }

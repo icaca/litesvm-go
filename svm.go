@@ -60,8 +60,9 @@ type LiteSVM struct {
 	// stubDb is a disk-free accountsdb used only for the program cache;
 	// it opens no database and touches no disk.
 	stubDb *accountsdb.AccountsDb
-	// Sources installed by us stay private until a transaction names the account.
-	immutablePrograms map[solana.PublicKey]struct{}
+	// Sources stay immutable until a transaction names the account; true means
+	// the data is shared across VMs and must be copied before exposure.
+	immutablePrograms map[solana.PublicKey]bool
 
 	slot        uint64
 	blockhashes []solana.Hash // newest first, capped at maxRecentBlockhashes
@@ -99,7 +100,7 @@ type LiteSVM struct {
 func New() (_ *LiteSVM, err error) {
 	s := &LiteSVM{
 		mem:               accounts.NewMemAccounts(),
-		immutablePrograms: make(map[solana.PublicKey]struct{}),
+		immutablePrograms: make(map[solana.PublicKey]bool),
 		cache:             &sealevel.SysvarCacheData{},
 		stubDb:            &accountsdb.AccountsDb{UseSharedProgramCache: true},
 		feeGov:            defaultFeeRateGovernor(),

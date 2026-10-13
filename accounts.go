@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/gagliardetto/solana-go"
 	"github.com/sonicfromnewyoke/mithril/pkg/accounts"
@@ -123,7 +124,8 @@ func (s *LiteSVM) AddProgram(programID solana.PublicKey, programBytes []byte) er
 
 // AddProgramImmutable installs a program like AddProgram, but reuses validation
 // by slice address. The caller must never modify programBytes for the lifetime
-// of the process; its backing allocation is retained. VM accounts still own copies.
+// of the process; its backing allocation is retained. ProgramData is shared until
+// a transaction references it; account API reads and writes still copy data.
 func (s *LiteSVM) AddProgramImmutable(programID solana.PublicKey, programBytes []byte) error {
 	return s.addProgram(programID, programBytes, true)
 }
@@ -144,7 +146,7 @@ func (s *LiteSVM) addProgram(programID solana.PublicKey, programBytes []byte, im
 	} else {
 		program = nil
 	}
-	return s.addProgramV3(programID, programBytes, program)
+	return s.addProgramV3(programID, programBytes, program, immutable)
 }
 
 // AddProgramFromFile loads an SBF program ELF from disk and installs it.
@@ -202,9 +204,45 @@ func (s *LiteSVM) addProgramV1V2(programID solana.PublicKey, programBytes []byte
 	return nil
 }
 
+type programDataKey struct {
+	// Retain the source allocation so its address cannot be reused after GC.
+	source *byte
+	size   int
+}
+
+var sharedProgramData = struct {
+	sync.Mutex
+	data map[programDataKey][]byte
+}{data: make(map[programDataKey][]byte)}
+
+func programDataBytes(programBytes []byte, immutable bool) []byte {
+	var key programDataKey
+	if immutable {
+		// Validation already rejected empty ELFs. Bytes do not depend on features.
+		key = programDataKey{source: &programBytes[0], size: len(programBytes)}
+		sharedProgramData.Lock()
+		defer sharedProgramData.Unlock()
+		if data := sharedProgramData.data[key]; data != nil {
+			return data
+		}
+	}
+	// ProgramData account: enum ProgramData = 3, slot u64, Option<authority>
+	// = Some(zeroed) to keep the program upgradable-shaped, then the ELF.
+	pdData := make([]byte, 4+8+1+32+len(programBytes))
+	binary.LittleEndian.PutUint32(pdData[0:4], 3)
+	binary.LittleEndian.PutUint64(pdData[4:12], 0) // deployed at slot 0
+	pdData[12] = 1                                 // Some(authority)
+	copy(pdData[13+32:], programBytes)
+
+	if immutable {
+		sharedProgramData.data[key] = pdData
+	}
+	return pdData
+}
+
 // addProgramV3 installs a program under the upgradeable loader: a program
 // account pointing at a canonical programdata account holding the ELF.
-func (s *LiteSVM) addProgramV3(programID solana.PublicKey, programBytes []byte, program *sbpf.Program) error {
+func (s *LiteSVM) addProgramV3(programID solana.PublicKey, programBytes []byte, program *sbpf.Program, immutable bool) error {
 	upgradeable := solana.PublicKey(addresses.BpfLoaderUpgradeableAddr)
 	programData, _, err := solana.FindProgramAddress([][]byte{programID[:]}, upgradeable)
 	if err != nil {
@@ -216,13 +254,7 @@ func (s *LiteSVM) addProgramV3(programID solana.PublicKey, programBytes []byte, 
 	binary.LittleEndian.PutUint32(progAcctData[0:4], 2)
 	copy(progAcctData[4:], programData[:])
 
-	// ProgramData account: enum ProgramData = 3, slot u64, Option<authority>
-	// = Some(zeroed) to keep the program upgradable-shaped, then the ELF.
-	pdData := make([]byte, 4+8+1+32+len(programBytes))
-	binary.LittleEndian.PutUint32(pdData[0:4], 3)
-	binary.LittleEndian.PutUint64(pdData[4:12], 0) // deployed at slot 0
-	pdData[12] = 1                                 // Some(authority)
-	copy(pdData[13+32:], programBytes)
+	pdData := programDataBytes(programBytes, immutable)
 
 	rentProg, err := s.MinimumBalanceForRentExemption(len(progAcctData))
 	if err != nil {
@@ -253,15 +285,17 @@ func (s *LiteSVM) addProgramV3(programID solana.PublicKey, programBytes []byte, 
 	}); err != nil {
 		return fmt.Errorf("%w: write program account: %v", ErrLiteSVM, err)
 	}
-	// This allocation has no external aliases. Transactions revoke its fast
-	// binding before exposing it, even for readonly instruction accounts.
+	// Transactions detach shared data and revoke its fast binding before
+	// exposing it, even for readonly instruction accounts.
 	s.stubDb.RemoveProgramFromCache(programData)
 	delete(s.immutablePrograms, programData)
 	if program != nil {
 		entry := &accountsdb.ProgramCacheEntry{Program: program}
 		entry.BindImmutableSource(pdData[45:], s.feats)
 		s.stubDb.AddProgramToCache(programData, entry)
-		s.immutablePrograms[programData] = struct{}{}
+	}
+	if program != nil || immutable {
+		s.immutablePrograms[programData] = immutable
 	}
 	s.stubDb.RemoveProgramFromCache(programID)
 	return nil
@@ -282,7 +316,7 @@ func (s *LiteSVM) SetDefaultPrograms() error {
 			var program *sbpf.Program
 			program, err = sealevel.LoadSharedProgram(p.Elf, s.feats, false)
 			if err == nil {
-				err = s.addProgramV3(p.ProgramID, p.Elf, program)
+				err = s.addProgramV3(p.ProgramID, p.Elf, program, false)
 			}
 		default:
 			err = fmt.Errorf("%w: unknown loader for %s", ErrLiteSVM, p.Name)

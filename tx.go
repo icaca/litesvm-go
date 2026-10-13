@@ -1,6 +1,7 @@
 package litesvm
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -81,7 +82,11 @@ func (s *LiteSVM) execute(tx *solana.Transaction, simulate bool) (*TxOutcome, er
 	// expose aliases to native loaders. This includes resolved lookup keys,
 	// simulations and failed transactions; subsequent hits use byte comparison.
 	for _, key := range tx.Message.AccountKeys {
-		if _, ok := s.immutablePrograms[key]; ok {
+		if shared, ok := s.immutablePrograms[key]; ok {
+			if shared {
+				acct := s.mem.Map[key]
+				acct.Data = bytes.Clone(acct.Data)
+			}
 			s.stubDb.RemoveProgramFromCache(key)
 			delete(s.immutablePrograms, key)
 		}
