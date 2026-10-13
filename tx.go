@@ -61,6 +61,7 @@ func (s *LiteSVM) sendBytes(txBytes []byte, simulate, allowVersioned bool) (*TxO
 // maybe_history_check; recording happens unconditionally for every included
 // transaction, like send_transaction.
 func (s *LiteSVM) execute(tx *solana.Transaction, simulate bool) (*TxOutcome, error) {
+	defer s.parameterArena.Reset()
 	outcome := &TxOutcome{}
 	if len(tx.Signatures) > 0 {
 		outcome.signature = tx.Signatures[0]
@@ -257,10 +258,11 @@ func (s *LiteSVM) newSlotCtx() *sealevel.SlotCtx {
 		// age check (blockhash_nonce.go compares against this field); the
 		// sentinel can never match a real blockhash, so unset blockhashes
 		// fail with BlockhashNotFound like Rust.
-		LatestEvictedBlockhash: latestEvictedSentinel,
-		AcctMapsMu:             &sync.Mutex{},
-		ModifiedAccts:          make(map[solana.PublicKey]bool),
-		WritableAccts:          make(map[solana.PublicKey]bool),
+		LatestEvictedBlockhash:    latestEvictedSentinel,
+		AcctMapsMu:                &sync.Mutex{},
+		ModifiedAccts:             make(map[solana.PublicKey]bool),
+		WritableAccts:             make(map[solana.PublicKey]bool),
+		TransactionParameterArena: &s.parameterArena,
 	}
 }
 
@@ -444,6 +446,8 @@ func (s *LiteSVM) commit(slotCtx *sealevel.SlotCtx, tx *solana.Transaction, out 
 				continue
 			}
 			acct := upd.Account
+			// Deserialization can alias the parameter arena, which the next tx reuses.
+			acct.Data = append([]byte(nil), acct.Data...)
 			_ = s.mem.SetAccount(&pk, &acct)
 		}
 		return ""

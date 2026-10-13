@@ -81,6 +81,7 @@ type LiteSVM struct {
 	// budget installed by SetComputeBudget; see computebudget.go.
 	computeBudget       *ComputeBudget
 	diagnosticExecution DiagnosticExecutionConfig
+	parameterArena      sealevel.ParameterArena
 
 	historyCap   int
 	history      map[solana.Signature]*TxOutcome
@@ -152,6 +153,7 @@ func New() (_ *LiteSVM, err error) {
 // Close releases the caches and stops their background workers. It is safe to
 // call repeatedly, but the instance must not be used after Close.
 func (s *LiteSVM) Close() {
+	s.parameterArena = sealevel.ParameterArena{}
 	s.stubDb.VoteAcctCache.Close()
 	s.stubDb.ProgramCache.Close()
 	s.stubDb.CommonAcctsCache.Close()
