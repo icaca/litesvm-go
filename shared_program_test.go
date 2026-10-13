@@ -22,7 +22,11 @@ func TestSharedProgramConcurrentVMs(t *testing.T) {
 				t.Parallel()
 				s := mustNew(t)
 				id := solana.PublicKey{178}
-				require.NoError(t, s.AddProgram(id, elf.Defaults[3].Elf))
+				if i%2 == 0 {
+					require.NoError(t, s.AddProgramImmutable(id, elf.Defaults[3].Elf))
+				} else {
+					require.NoError(t, s.AddProgram(id, elf.Defaults[3].Elf))
+				}
 				dataKey, _, err := solana.FindProgramAddress([][]byte{id[:]}, solana.BPFLoaderUpgradeableProgramID)
 				require.NoError(t, err)
 				entry, ok := s.stubDb.MaybeGetProgramFromCache(dataKey)
@@ -107,4 +111,29 @@ func TestPrivateProgramSourceInvalidation(t *testing.T) {
 	require.False(t, run("closed source").IsOk())
 	require.NoError(t, s.AddProgram(id, elf.Defaults[3].Elf))
 	require.True(t, run("after close and reinstall").IsOk())
+}
+
+func TestImmutableProgramSourceInvalidation(t *testing.T) {
+	s := mustNew(t)
+	id := solana.PublicKey{180}
+	require.ErrorIs(t, s.AddProgramImmutable(id, []byte("invalid ELF")), ErrLiteSVM)
+	source := bytes.Clone(elf.Defaults[3].Elf)
+	require.NoError(t, s.AddProgramImmutable(id, source))
+	dataKey, _, err := solana.FindProgramAddress([][]byte{id[:]}, solana.BPFLoaderUpgradeableProgramID)
+	require.NoError(t, err)
+	payer := solana.NewWallet()
+	require.NoError(t, s.Airdrop(payer.PublicKey(), lamportsPerSol))
+	run := func(payload string) *TxOutcome {
+		out, err := s.SendLegacyTransaction(memoTx(t, s, payer.PrivateKey, id, []byte(payload)))
+		require.NoError(t, err)
+		return out
+	}
+	require.True(t, run("immutable source").IsOk())
+	data := s.GetAccount(dataKey)
+	data.Data[45] = 0
+	require.NoError(t, s.SetAccount(dataKey, data))
+	require.False(t, run("invalidated source").IsOk(), "a private account write must invalidate the VM binding")
+	require.Equal(t, elf.Defaults[3].Elf, source, "VM writes must not change the promised source")
+	require.NoError(t, s.AddProgramImmutable(id, source))
+	require.True(t, run("reinstalled source").IsOk(), "a warm immutable install must restore the original program")
 }

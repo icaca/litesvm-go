@@ -118,13 +118,28 @@ func NewAccount(lamports uint64, data []byte, owner solana.PublicKey, executable
 // (which loads and verifies the ELF while populating its program cache),
 // invalid program bytes are rejected up front.
 func (s *LiteSVM) AddProgram(programID solana.PublicKey, programBytes []byte) error {
-	program, err := sealevel.LoadSharedProgram(programBytes, s.feats, true)
+	return s.addProgram(programID, programBytes, false)
+}
+
+// AddProgramImmutable installs a program like AddProgram, but reuses validation
+// by slice address. The caller must never modify programBytes for the lifetime
+// of the process; its backing allocation is retained. VM accounts still own copies.
+func (s *LiteSVM) AddProgramImmutable(programID solana.PublicKey, programBytes []byte) error {
+	return s.addProgram(programID, programBytes, true)
+}
+
+func (s *LiteSVM) addProgram(programID solana.PublicKey, programBytes []byte, immutable bool) error {
+	load := sealevel.LoadSharedProgram
+	if immutable {
+		load = sealevel.LoadSharedProgramImmutable
+	}
+	program, err := load(programBytes, s.feats, true)
 	if err != nil {
 		return fmt.Errorf("%w: add_program: invalid program bytes: %v", ErrLiteSVM, err)
 	}
 	// An ELF can pass deployment's syscall set yet collide with a runtime-only
 	// syscall. Preserve successful installation but leave execution uncached then.
-	if executable, err := sealevel.LoadSharedProgram(programBytes, s.feats, false); err == nil {
+	if executable, err := load(programBytes, s.feats, false); err == nil {
 		program = executable
 	} else {
 		program = nil
